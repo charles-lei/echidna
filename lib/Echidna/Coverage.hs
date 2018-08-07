@@ -1,30 +1,35 @@
 {-# LANGUAGE BangPatterns, DeriveGeneric, FlexibleContexts, KindSignatures, LambdaCase, StrictData #-}
 
 module Echidna.Coverage (
-    CoverageInfo
+    ContractCov(..)
+  , CoverageInfo
   , CoverageRef
   , CoverageReport(..)
+  , byHashes
   , eCommandCoverage
   , ePropertySeqCoverage
   , execCallCoverage
   , getCover
-  , getCoverageReport
+  , printResults
+  , ppHashes
   , module Echidna.Internal.Runner
   , module Echidna.Internal.JsonRunner
   ) where
 
-import Control.DeepSeq            (force)
+import Control.DeepSeq            (NFData, force)
 import Control.Concurrent.MVar    (MVar, modifyMVar_)
-import Control.Lens               ((&), use)
+import Control.Lens               ((&), use, view)
 import Control.Monad.IO.Class     (MonadIO, liftIO)
-import Control.Monad.State.Strict (MonadState, StateT, evalStateT, runState)
+import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get, runState)
 import Control.Monad.Reader       (MonadReader, ReaderT, runReaderT, ask)
 import Data.Aeson                 (ToJSON(..), encode)
 import Data.ByteString.Lazy.Char8 (unpack)
 import Data.Foldable              (Foldable(..), foldl')
 import Data.IORef                 (IORef, modifyIORef', newIORef, readIORef)
+import Data.Map.Strict            (Map, insertWith, toAscList)
+import Data.Maybe                 (fromMaybe)
 import Data.Ord                   (comparing)
-import Data.Set                   (Set, insert, size)
+import Data.Set                   (Set, insert, singleton, size)
 import Data.Vector                (Vector, fromList)
 import Data.Vector.Generic        (maximumBy)
 import GHC.Generics
@@ -35,9 +40,10 @@ import Hedgehog
 import Hedgehog.Gen               (choice)
 
 import EVM
+import EVM.Types    (W256)
 
 import Echidna.ABI (SolCall, SolSignature, genInteractions, mutateCall)
-import Echidna.Config (Config(..))
+import Echidna.Config (Config(..), printCoverage)
 import Echidna.Internal.Runner
 import Echidna.Internal.JsonRunner
 import Echidna.Exec
@@ -45,15 +51,34 @@ import Echidna.Exec
 -----------------------------------------
 -- Coverage data types and printing
 
-type CoverageInfo = (SolCall, Set Int)
+data CoveragePoint = C Int W256 deriving (Eq, Generic)
+
+instance NFData CoveragePoint
+
+instance Ord CoveragePoint where
+  compare (C x0 y0) (C x1 y1) = case compare y0 y1 of EQ  -> compare x0 x1
+                                                      ord -> ord
+
+type CoverageInfo = (SolCall, Set CoveragePoint)
 type CoverageRef  = IORef CoverageInfo
 
-data CoverageReport = CoverageReport {coverage :: Int} deriving (Show,Generic)
+byHashes :: (Foldable t, Monoid (t CoveragePoint)) => t CoveragePoint -> Map W256 (Set Int)
+byHashes = foldr (\(C i w) -> insertWith mappend w $ singleton i) mempty . toList
 
+printResults :: (MonadIO m, MonadReader Config m) => Set CoveragePoint -> m ()
+printResults ci = do liftIO (putStrLn $ "Coverage: " ++ show (size ci) ++ " unique arcs")
+                     view printCoverage >>= \case True  -> liftIO . print . ppHashes $ byHashes ci
+                                                  False -> pure ()
+
+data ContractCov = ContractCov { hash :: String, arcs :: ![Int] } deriving (Show, Generic)
+data CoverageReport = CoverageReport { coverage :: ![ContractCov] } deriving (Show, Generic)
+
+instance ToJSON ContractCov
 instance ToJSON CoverageReport
 
-getCoverageReport :: Set Int -> String
-getCoverageReport = unpack . encode . toJSON . CoverageReport . size
+ppHashes :: Map W256 (Set Int) -> String
+ppHashes = unpack . encode . toJSON . CoverageReport
+  . map (\(h, is) -> ContractCov (show h) (toList is)) . toAscList
 
 -----------------------------------------
 -- Set cover algo
@@ -78,8 +103,9 @@ execCallCoverage sol = execCallUsing (go mempty) sol where
                  liftIO $ modifyIORef' ref (const (sol, c))
                  return x
     _      -> do current <- use $ state . pc
+                 ch <- view codehash . fromMaybe (error "no current contract??") . currentContract <$> get
                  S.state (runState exec1)
-                 go . force $ insert current c
+                 go . force $ insert (C current ch)  c
 
 eCommandCoverage :: (MonadGen n, MonadTest m, MonadState VM m, MonadReader CoverageRef m, MonadIO m)
                  => [SolCall] -> (VM -> Bool) -> [SolSignature] -> Config -> [Command n m VMState]

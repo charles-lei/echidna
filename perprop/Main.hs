@@ -149,7 +149,7 @@ main = do
 
       ls <- mapM (readMVar . snd) tests
       let ci = foldl' (\acc xs -> unions (acc : map snd xs)) mempty ls
-      putStrLn $ getCoverageReport ci
+      putStrLn $ ppHashes (byHashes ci)
       
 -- }}}
       

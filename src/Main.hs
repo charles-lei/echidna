@@ -14,7 +14,7 @@ import Data.Text               (pack)
 import Data.Semigroup          ((<>))
 
 import Echidna.Config
-import Echidna.Coverage (ePropertySeqCoverage, getCover)
+import Echidna.Coverage (ePropertySeqCoverage, getCover, printResults)
 import Echidna.Exec
 import Echidna.Solidity
 
@@ -84,4 +84,4 @@ main = do
         
       ls <- liftIO $ mapM (readMVar . snd) tests
       let ci = foldl' (\acc xs -> unions (acc : map snd xs)) mempty ls
-      liftIO . putStrLn $ "Coverage: " ++ show (size ci) ++ " unique PC's"
+      printResults ci
