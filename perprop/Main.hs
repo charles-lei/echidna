@@ -11,7 +11,6 @@ import Control.Monad.Identity  (Identity(..))
 import Control.Monad.Reader    (runReaderT)
 import Data.List               ((\\), foldl')
 import Data.Semigroup          ((<>))
-import Data.Set                (unions)
 import Data.Text               (Text, unpack, pack)
 import Data.Yaml
 import EVM                     (VM)
@@ -148,8 +147,8 @@ main = do
         checkParallelJson $ group file c a v xs
 
       ls <- mapM (readMVar . snd) tests
-      let ci = foldl' (\acc xs -> unions (acc : map snd xs)) mempty ls
-      putStrLn $ ppHashes (byHashes ci)
+      let ci = foldl' (\acc xs -> reduceCoverage (acc : map snd xs)) mempty ls
+      putStrLn $ ppHashes ci
       
 -- }}}
       

@@ -1,17 +1,18 @@
-{-# LANGUAGE BangPatterns, DeriveGeneric, FlexibleContexts, KindSignatures, LambdaCase, StrictData #-}
+{-# LANGUAGE BangPatterns, DeriveGeneric, FlexibleContexts, KindSignatures, LambdaCase, StrictData  #-}
 
 module Echidna.Coverage (
     ContractCov(..)
   , CoverageInfo
   , CoverageRef
   , CoverageReport(..)
-  , byHashes
   , eCommandCoverage
   , ePropertySeqCoverage
   , execCallCoverage
   , getCover
+  , mergeCoverage
   , printResults
   , ppHashes
+  , reduceCoverage
   , module Echidna.Internal.Runner
   , module Echidna.Internal.JsonRunner
   ) where
@@ -26,10 +27,10 @@ import Data.Aeson                 (ToJSON(..), encode)
 import Data.ByteString.Lazy.Char8 (unpack)
 import Data.Foldable              (Foldable(..), foldl')
 import Data.IORef                 (IORef, modifyIORef', newIORef, readIORef)
-import Data.Map.Strict            (Map, insertWith, toAscList)
+import Data.Map.Strict            (Map, insertWith, toAscList, unionWith)
 import Data.Maybe                 (fromMaybe)
 import Data.Ord                   (comparing)
-import Data.Set                   (Set, insert, singleton, size)
+import Data.Set                   (Set, singleton, union)
 import Data.Vector                (Vector, fromList)
 import Data.Vector.Generic        (maximumBy)
 import GHC.Generics
@@ -51,16 +52,20 @@ import Echidna.Exec
 -----------------------------------------
 -- Coverage data types and printing
 
-type CoveragePoint = (W256,Int)
-type CoverageInfo = (SolCall, Set (W256,Int))
+type Coverage = Map W256 (Set Int)
+
+mergeCoverage :: Coverage -> Coverage -> Coverage
+mergeCoverage a b = unionWith union a b
+
+reduceCoverage :: [Coverage] -> Coverage
+reduceCoverage = foldl' mergeCoverage mempty
+
+type CoverageInfo = (SolCall,Coverage)
 type CoverageRef  = IORef CoverageInfo
 
-byHashes :: (Foldable t, Monoid (t (W256,Int))) => t CoveragePoint -> Map W256 (Set Int)
-byHashes = foldr (\(w,i) -> insertWith mappend w $ singleton i) mempty . toList
-
-printResults :: (MonadIO m, MonadReader Config m) => Set CoveragePoint -> m ()
-printResults ci = do liftIO (putStrLn $ "Coverage: " ++ show (size ci) ++ " unique arcs")
-                     view printCoverage >>= \case True  -> liftIO . print . ppHashes $ byHashes ci
+printResults :: (MonadIO m, MonadReader Config m) => Coverage -> m ()
+printResults ci = do liftIO (putStrLn $ "Coverage: " ++ show (coverageSize ci) ++ " unique arcs")
+                     view printCoverage >>= \case True  -> liftIO . print . ppHashes $ ci
                                                   False -> pure ()
 
 data ContractCov = ContractCov { hash :: String, arcs :: ![Int] } deriving (Show, Generic)
@@ -69,22 +74,26 @@ data CoverageReport = CoverageReport { coverage :: ![ContractCov] } deriving (Sh
 instance ToJSON ContractCov
 instance ToJSON CoverageReport
 
-ppHashes :: Map W256 (Set Int) -> String
+ppHashes :: Coverage -> String
 ppHashes = unpack . encode . toJSON . CoverageReport
   . map (\(h, is) -> ContractCov (show h) (toList is)) . toAscList
 
 -----------------------------------------
 -- Set cover algo
 
-getCover :: (Foldable t, Monoid (t b)) => [(a, t b)] -> [a]
+getCover :: [(a, Coverage)] -> [a]
 getCover [] = []
 getCover xs = setCover (fromList xs) mempty totalCoverage []
-  where totalCoverage = length $ foldl' (\acc -> mappend acc . snd) mempty xs
+  where totalCoverage = coverageSize . mconcat $ map snd xs
 
-setCover :: (Foldable t, Monoid (t b)) => Vector (a, t b) -> t b -> Int -> [a] -> [a]
+setCover :: Vector (a, Coverage) -> Coverage -> Int -> [a] -> [a]
 setCover vs cov tot calls = best : calls & if length new == tot then id
                                                                 else setCover vs new tot where
-  (best, new) = mappend cov <$> maximumBy (comparing $ length . mappend cov . snd) vs
+  (best, new) = mergeCoverage cov <$> maximumBy (comparing $ length . mergeCoverage cov . snd) vs
+
+coverageSize :: Coverage -> Int
+coverageSize = foldl' (\acc s -> acc + (length s)) 0
+
 
 -----------------------------------------
 -- Echidna exec with coverage
@@ -98,7 +107,7 @@ execCallCoverage sol = execCallUsing (go mempty) sol where
     _      -> do current <- use $ state . pc
                  ch <- view codehash . fromMaybe (error "no current contract??") . currentContract <$> get
                  S.state (runState exec1)
-                 go . force $ insert (ch,current)  c
+                 go . force $ insertWith union ch (singleton current) c
 
 eCommandCoverage :: (MonadGen n, MonadTest m, MonadState VM m, MonadReader CoverageRef m, MonadIO m)
                  => [SolCall] -> (VM -> Bool) -> [SolSignature] -> Config -> [Command n m VMState]

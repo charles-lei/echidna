@@ -9,12 +9,11 @@ import Control.Monad.Catch     (MonadThrow(..))
 import Control.Monad.IO.Class  (liftIO)
 import Control.Monad.Reader    (runReaderT)
 import Data.List               (foldl')
-import Data.Set                (unions)
 import Data.Text               (pack)
 import Data.Semigroup          ((<>))
 
 import Echidna.Config
-import Echidna.Coverage (ePropertySeqCoverage, getCover, printResults)
+import Echidna.Coverage (ePropertySeqCoverage, getCover, printResults, reduceCoverage)
 import Echidna.Exec
 import Echidna.Solidity
 
@@ -83,5 +82,5 @@ main = do
         checkGroup . Group (GroupName file) =<< mapM prop xs
         
       ls <- liftIO $ mapM (readMVar . snd) tests
-      let ci = foldl' (\acc xs -> unions (acc : map snd xs)) mempty ls
+      let ci = foldl' (\acc xs -> reduceCoverage (acc : map snd xs)) mempty ls
       printResults ci
