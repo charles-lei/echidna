@@ -16,7 +16,7 @@ module Echidna.Coverage (
   , module Echidna.Internal.JsonRunner
   ) where
 
-import Control.DeepSeq            (NFData, force)
+import Control.DeepSeq            (force)
 import Control.Concurrent.MVar    (MVar, modifyMVar_)
 import Control.Lens               ((&), use, view)
 import Control.Monad.IO.Class     (MonadIO, liftIO)
@@ -51,21 +51,13 @@ import Echidna.Exec
 -----------------------------------------
 -- Coverage data types and printing
 
-data CoveragePoint = C Int W256 deriving (Eq, Generic)
-
-instance NFData CoveragePoint
-
-instance Ord CoveragePoint where
-  compare (C x0 y0) (C x1 y1) = case compare y0 y1 of EQ  -> compare x0 x1
-                                                      ord -> ord
-
-type CoverageInfo = (SolCall, Set CoveragePoint)
+type CoverageInfo = (SolCall, Set (W256,Int))
 type CoverageRef  = IORef CoverageInfo
 
-byHashes :: (Foldable t, Monoid (t CoveragePoint)) => t CoveragePoint -> Map W256 (Set Int)
-byHashes = foldr (\(C i w) -> insertWith mappend w $ singleton i) mempty . toList
+byHashes :: (Foldable t, Monoid (t (W256,Int))) => t (W256,Int) -> Map W256 (Set Int)
+byHashes = foldr (\(w,i) -> insertWith mappend w $ singleton i) mempty . toList
 
-printResults :: (MonadIO m, MonadReader Config m) => Set CoveragePoint -> m ()
+printResults :: (MonadIO m, MonadReader Config m) => Set (W256,Int) -> m ()
 printResults ci = do liftIO (putStrLn $ "Coverage: " ++ show (size ci) ++ " unique arcs")
                      view printCoverage >>= \case True  -> liftIO . print . ppHashes $ byHashes ci
                                                   False -> pure ()
@@ -105,7 +97,7 @@ execCallCoverage sol = execCallUsing (go mempty) sol where
     _      -> do current <- use $ state . pc
                  ch <- view codehash . fromMaybe (error "no current contract??") . currentContract <$> get
                  S.state (runState exec1)
-                 go . force $ insert (C current ch)  c
+                 go . force $ insert (ch,current)  c
 
 eCommandCoverage :: (MonadGen n, MonadTest m, MonadState VM m, MonadReader CoverageRef m, MonadIO m)
                  => [SolCall] -> (VM -> Bool) -> [SolSignature] -> Config -> [Command n m VMState]
