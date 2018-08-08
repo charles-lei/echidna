@@ -51,13 +51,14 @@ import Echidna.Exec
 -----------------------------------------
 -- Coverage data types and printing
 
+type CoveragePoint = (W256,Int)
 type CoverageInfo = (SolCall, Set (W256,Int))
 type CoverageRef  = IORef CoverageInfo
 
-byHashes :: (Foldable t, Monoid (t (W256,Int))) => t (W256,Int) -> Map W256 (Set Int)
+byHashes :: (Foldable t, Monoid (t (W256,Int))) => t CoveragePoint -> Map W256 (Set Int)
 byHashes = foldr (\(w,i) -> insertWith mappend w $ singleton i) mempty . toList
 
-printResults :: (MonadIO m, MonadReader Config m) => Set (W256,Int) -> m ()
+printResults :: (MonadIO m, MonadReader Config m) => Set CoveragePoint -> m ()
 printResults ci = do liftIO (putStrLn $ "Coverage: " ++ show (size ci) ++ " unique arcs")
                      view printCoverage >>= \case True  -> liftIO . print . ppHashes $ byHashes ci
                                                   False -> pure ()
