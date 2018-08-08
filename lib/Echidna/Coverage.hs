@@ -60,6 +60,9 @@ mergeCoverage a b = unionWith union a b
 reduceCoverage :: [Coverage] -> Coverage
 reduceCoverage = foldl' mergeCoverage mempty
 
+coverageSize :: Coverage -> Int
+coverageSize = foldl' (\acc s -> acc + (length s)) 0
+
 type CoverageInfo = (SolCall,Coverage)
 type CoverageRef  = IORef CoverageInfo
 
@@ -87,13 +90,9 @@ getCover xs = setCover (fromList xs) mempty totalCoverage []
   where totalCoverage = coverageSize . mconcat $ map snd xs
 
 setCover :: Vector (a, Coverage) -> Coverage -> Int -> [a] -> [a]
-setCover vs cov tot calls = best : calls & if length new == tot then id
+setCover vs cov tot calls = best : calls & if coverageSize new == tot then id
                                                                 else setCover vs new tot where
-  (best, new) = mergeCoverage cov <$> maximumBy (comparing $ length . mergeCoverage cov . snd) vs
-
-coverageSize :: Coverage -> Int
-coverageSize = foldl' (\acc s -> acc + (length s)) 0
-
+  (best, new) = mappend cov <$> maximumBy (comparing $ length . mappend cov . snd) vs
 
 -----------------------------------------
 -- Echidna exec with coverage
